@@ -2,6 +2,7 @@ import requests
 import json
 import os
 import time
+import re
 from datetime import datetime
 from bs4 import BeautifulSoup
 
@@ -11,15 +12,14 @@ TELEGRAM_CHAT_ID   = "1656687130"
 SEEN_FILE = "seen_tenders.json"
 SHEETS_FILE = "tenders.csv"
 
-# Категории с их basecode ID из HTML сайта
 SEARCH_PARAMS = [
-    {"app_basecode": "18999", "label": "45100000 - Подготовка стройплощадки"},
-    {"app_basecode": "18951", "label": "37400000 - Спортивные товары"},
-    {"app_basecode": "18965", "label": "37500000 - Игры и аттракционы"},
-    {"app_codes": "37420000",  "label": "CPV 37420000 - Гимнастика"},
-    {"app_codes": "37440000",  "label": "CPV 37440000 - Фитнес"},
-    {"app_codes": "45112700",  "label": "CPV 45112700 - Ландшафт"},
-    {"app_codes": "45112720",  "label": "CPV 45112720 - Ландшафт спортплощадок"},
+    {"app_basecode": "18999", "app_codes": "", "label": "45100000 - Подготовка стройплощадки"},
+    {"app_basecode": "18951", "app_codes": "", "label": "37400000 - Спортивные товары"},
+    {"app_basecode": "18965", "app_codes": "", "label": "37500000 - Игры и аттракционы"},
+    {"app_basecode": "0",     "app_codes": "37420000", "label": "CPV 37420000 - Гимнастика"},
+    {"app_basecode": "0",     "app_codes": "37440000", "label": "CPV 37440000 - Фитнес"},
+    {"app_basecode": "0",     "app_codes": "45112700", "label": "CPV 45112700 - Ландшафт"},
+    {"app_basecode": "0",     "app_codes": "45112720", "label": "CPV 45112720 - Ландшафт спортплощадок"},
 ]
 
 def load_seen():
@@ -39,7 +39,6 @@ def send_telegram(msg):
             json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"},
             timeout=15
         )
-        print(f"  Telegram: {r.status_code}")
         return r.status_code == 200
     except Exception as e:
         print(f"  Telegram ошибка: {e}")
@@ -56,7 +55,6 @@ def search_tenders(params):
         "Content-Type": "application/x-www-form-urlencoded",
     })
 
-    # Сначала загружаем главную страницу для куков
     try:
         session.get("https://tenders.procurement.gov.ge/public/?lang=ru", timeout=15)
         time.sleep(1)
@@ -80,8 +78,8 @@ def search_tenders(params):
         "app_basecode": params.get("app_basecode", "0"),
         "app_codes": params.get("app_codes", ""),
         "app_date_type": "1",
-        "app_date_from": "01.04.2026",
-        "app_date_tlll": "21.04.2026",
+        "app_date_from": "",
+        "app_date_tlll": "",
         "app_amount_from": "",
         "app_amount_to": "",
         "app_currency": "2",
@@ -94,11 +92,8 @@ def search_tenders(params):
             data=data,
             timeout=30
         )
-        print(f"  HTTP {r.status_code}, размер: {len(r.text)} байт")
         if r.status_code == 200 and len(r.text) > 100:
             return parse_html(r.text)
-        else:
-            print(f"  Ответ: {r.text[:200]}")
     except Exception as e:
         print(f"  Ошибка: {e}")
     return []
@@ -107,54 +102,48 @@ def parse_html(html):
     soup = BeautifulSoup(html, "html.parser")
     tenders = []
 
-    print(f"  HTML превью: {html[:300]}")
+    rows = soup.find_all("tr", id=re.compile(r"^A\d+"))
+    print(f"  Строк с тендерами: {len(rows)}")
 
-    # Ищем таблицу с результатами
-    tables = soup.find_all("table")
-    print(f"  Таблиц найдено: {len(tables)}")
+    for row in rows:
+        tr_id = row.get("id", "")
+        tender_id = tr_id.replace("A", "") if tr_id.startswith("A") else ""
 
-    for table in tables:
-        rows = table.find_all("tr")
-        for row in rows:
-            cols = row.find_all("td")
-            if len(cols) < 3:
-                continue
+        onclick = row.get("onclick", "")
+        m = re.search(r"ShowApp\((\d+)", onclick)
+        if m:
+            tender_id = m.group(1)
 
-            links = row.find_all("a")
-            if not links:
-                continue
+        if not tender_id:
+            continue
 
-            for link in links:
-                onclick = link.get("onclick", "")
-                href = link.get("href", "")
+        cols = row.find_all("td")
+        col_texts = [c.get_text(separator=" ", strip=True) for c in cols]
 
-                import re
-                tender_id = None
-                if "ShowApp" in onclick:
-                    m = re.search(r"ShowApp\((\d+)", onclick)
-                    if m:
-                        tender_id = m.group(1)
-                elif "go=" in href:
-                    m = re.search(r"go=(\d+)", href)
-                    if m:
-                        tender_id = m.group(1)
+        name = ""
+        for c in cols:
+            txt = c.get_text(strip=True)
+            if len(txt) > len(name) and not txt.startswith("NAT") and not txt.startswith("SPA"):
+                name = txt
 
-                if tender_id:
-                    col_texts = [c.get_text(strip=True) for c in cols]
-                    tender = {
-                        "id": tender_id,
-                        "reg_id": col_texts[0] if len(col_texts) > 0 else "",
-                        "name": link.get_text(strip=True),
-                        "org": col_texts[2] if len(col_texts) > 2 else "",
-                        "date": col_texts[3] if len(col_texts) > 3 else "",
-                        "price": col_texts[4] if len(col_texts) > 4 else "",
-                        "deadline": col_texts[5] if len(col_texts) > 5 else "",
-                        "status": col_texts[6] if len(col_texts) > 6 else "",
-                    }
-                    tenders.append(tender)
-                    break
+        reg_id = ""
+        for txt in col_texts:
+            if any(txt.startswith(p) for p in ["NAT", "SPA", "GEO", "CON", "MEP", "DAP"]):
+                reg_id = txt
+                break
 
-    print(f"  Тендеров распарсено: {len(tenders)}")
+        tender = {
+            "id": tender_id,
+            "reg_id": reg_id or (col_texts[0] if col_texts else ""),
+            "name": name,
+            "org": col_texts[2] if len(col_texts) > 2 else "",
+            "date": col_texts[3] if len(col_texts) > 3 else "",
+            "price": col_texts[4] if len(col_texts) > 4 else "",
+            "deadline": col_texts[5] if len(col_texts) > 5 else "",
+        }
+        tenders.append(tender)
+        print(f"  ✅ Найден: {tender['reg_id']} — {tender['name'][:60]}")
+
     return tenders
 
 def save_to_csv(tender, label):
@@ -164,32 +153,33 @@ def save_to_csv(tender, label):
             f.write("Дата,ID,Номер,Название,Организация,Цена,Дедлайн,Категория,Ссылка\n")
         f.write(",".join([
             datetime.now().strftime("%d.%m.%Y"),
-            tender.get("id",""),
-            tender.get("reg_id",""),
-            f'"{tender.get("name","")}"',
-            f'"{tender.get("org","")}"',
-            tender.get("price",""),
-            tender.get("deadline",""),
+            tender.get("id", ""),
+            tender.get("reg_id", ""),
+            f'"{tender.get("name", "")}"',
+            f'"{tender.get("org", "")}"',
+            tender.get("price", ""),
+            tender.get("deadline", ""),
             f'"{label}"',
-            f'https://tenders.procurement.gov.ge/public/?lang=ru#go={tender.get("id","")}'
+            f'https://tenders.procurement.gov.ge/public/?lang=ru#go={tender.get("id", "")}'
         ]) + "\n")
 
 def format_msg(tender, label):
-    tid = tender.get("id","")
+    tid = tender.get("id", "")
+    url = f"https://tenders.procurement.gov.ge/public/?lang=ru#go={tid}"
     return (
         f"🏋️ <b>НОВЫЙ ТЕНДЕР</b>\n"
-        f"{'─'*28}\n"
-        f"📋 <b>{tender.get('reg_id','N/A')}</b>\n"
-        f"📌 {tender.get('name','Без названия')}\n"
-        f"🏢 {tender.get('org','—')}\n"
-        f"💰 {tender.get('price','—')}\n"
-        f"📅 {tender.get('deadline','—')}\n"
+        f"{'─' * 28}\n"
+        f"📋 <b>{tender.get('reg_id', 'N/A')}</b>\n"
+        f"📌 {tender.get('name', 'Без названия')[:100]}\n"
+        f"🏢 {tender.get('org', '—')[:80]}\n"
+        f"💰 {tender.get('price', '—')}\n"
+        f"📅 Дедлайн: {tender.get('deadline', '—')}\n"
         f"🏷 {label}\n"
-        f"🔗 <a href='https://tenders.procurement.gov.ge/public/?lang=ru#go={tid}'>Открыть</a>"
+        f"🔗 <a href='{url}'>Открыть тендер</a>"
     )
 
 def check_tenders():
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"[{datetime.now().strftime('%d.%m.%Y %H:%M')}] Проверяю тендеры...")
 
     seen = load_seen()
@@ -201,17 +191,20 @@ def check_tenders():
         tenders = search_tenders(params)
 
         for t in tenders:
-            uid = t.get("id") or t.get("reg_id","")
+            uid = t.get("id") or t.get("reg_id", "")
             if uid and uid not in seen:
                 seen.add(uid)
                 save_to_csv(t, label)
                 send_telegram(format_msg(t, label))
                 new_count += 1
                 time.sleep(0.5)
-        time.sleep(3)
+        time.sleep(2)
 
     save_seen(seen)
-    send_telegram(f"📊 Проверка {datetime.now().strftime('%d.%m.%Y %H:%M')}\nНовых тендеров: <b>{new_count}</b>")
+    send_telegram(
+        f"📊 Проверка {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+        f"Новых тендеров: <b>{new_count}</b>"
+    )
     print(f"\n✅ Готово! Новых тендеров: {new_count}")
 
 if __name__ == "__main__":
