@@ -123,25 +123,51 @@ def parse_list_html(html):
             tender_id = m.group(1)
         if not tender_id:
             continue
+
         cols = row.find_all("td")
         col_texts = [c.get_text(separator=" ", strip=True) for c in cols]
-        name = ""
-        for c in cols:
-            txt = c.get_text(strip=True)
-            if len(txt) > len(name) and not any(txt.startswith(p) for p in ["NAT","SPA","GEO","CON","MEP","DAP"]):
-                name = txt
+
+        # Reg ID - NAT/SPA ile başlayan
         reg_id = ""
         for txt in col_texts:
-            if any(txt.startswith(p) for p in ["NAT","SPA","GEO","CON","MEP","DAP"]):
-                reg_id = txt
+            clean = txt.strip()
+            if any(clean.startswith(p) for p in ["NAT","SPA","GEO","CON","MEP","DAP"]):
+                reg_id = clean.split()[0]
                 break
+
+        # İsim - en uzun td içeriği
+        name = ""
+        for c in cols:
+            links = c.find_all("a")
+            if links:
+                for lnk in links:
+                    txt = lnk.get_text(strip=True)
+                    if len(txt) > len(name):
+                        name = txt
+            else:
+                txt = c.get_text(strip=True)
+                if len(txt) > len(name) and len(txt) > 10:
+                    name = txt
+
+        # Organizasyon, fiyat, son tarih
+        org = col_texts[1] if len(col_texts) > 1 else ""
+        price = ""
+        deadline = ""
+        for txt in col_texts:
+            if "GEL" in txt or "gel" in txt.lower():
+                price = txt
+            if re.search(r"\d{2}\.\d{2}\.\d{4}", txt):
+                deadline = txt
+
+        print(f"  DEBUG: id={tender_id} reg={reg_id} name={name[:40]}")
+
         tenders.append({
             "id": tender_id,
-            "reg_id": reg_id or (col_texts[0] if col_texts else ""),
+            "reg_id": reg_id,
             "name": name,
-            "org": col_texts[2] if len(col_texts) > 2 else "",
-            "price": col_texts[4] if len(col_texts) > 4 else "",
-            "deadline": col_texts[5] if len(col_texts) > 5 else "",
+            "org": org,
+            "price": price,
+            "deadline": deadline,
         })
     return tenders
 
