@@ -19,5 +19,22 @@ jobs:
       - name: Install dependencies
         run: pip install requests beautifulsoup4
 
+      - name: Restore cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            seen_tenders.json
+            tracked_tenders.json
+          key: tender-data-${{ runner.os }}
+          restore-keys: tender-data-
+
       - name: Run bot
         run: python georgia_tender_bot_READY.py
+
+      - name: Save cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            seen_tenders.json
+            tracked_tenders.json
+          key: tender-data-${{ runner.os }}
