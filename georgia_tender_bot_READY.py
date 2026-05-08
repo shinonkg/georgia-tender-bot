@@ -124,55 +124,45 @@ def parse_list_html(html):
         if not tender_id:
             continue
 
-        cols = row.find_all("td")
+        full_text = row.get_text(" ", strip=True)
 
-        # NAT numarasini onclick'ten al
+        # NAT numarasi
         reg_id = ""
-        m2 = re.search(r"NAT\d+|SPA\d+|GEO\d+|CON\d+|MEP\d+|DAP\d+", onclick)
+        m2 = re.search(r"(NAT|SPA|GEO|CON|MEP|DAP)\d+", full_text)
         if m2:
             reg_id = m2.group(0)
 
-        # Tum metni al, statusu temizle
-        full_text = " ".join([c.get_text(" ", strip=True) for c in cols])
-        for status in STATUS_EMOJI.keys():
-            full_text = full_text.replace(status, "")
-        full_text = re.sub(r"Электронный тендер.*?Номер заявки", "", full_text)
-        full_text = re.sub(r"\s+", " ", full_text).strip()
-
-        # NAT numarasini metinden al
-        if not reg_id:
-            m3 = re.search(r"(NAT|SPA|GEO|CON|MEP|DAP)\d+", full_text)
-            if m3:
-                reg_id = m3.group(0)
-
         # Fiyat
         price = ""
-        m4 = re.search(r"[\d\s`']+GEL", full_text)
-        if m4:
-            price = m4.group(0).strip()
+        m3 = re.search(r"[\d`' ]+\.00 GEL", full_text)
+        if m3:
+            price = m3.group(0).strip()
 
-        # Tarih
+        # Son tarih - "Срок принятия предложения: XX.XX.XXXX"
         deadline = ""
-        m5 = re.search(r"\d{2}\.\d{2}\.\d{4}", full_text)
+        m4 = re.search(r"Срок принятия предложения[:\s]+(\d{2}\.\d{2}\.\d{4})", full_text)
+        if m4:
+            deadline = m4.group(1)
+
+        # Zakupshik - organizasyon
+        org = ""
+        m5 = re.search(r"Закупщик[:\s]+(.+?)(?:Категория|Предполагаемая|$)", full_text)
         if m5:
-            deadline = m5.group(0)
+            org = m5.group(1).strip()[:100]
 
-        # Isim - reg_id ve price/tarih disindaki kisim
-        name = full_text
-        if reg_id:
-            name = name.replace(reg_id, "")
-        if price:
-            name = name.replace(price, "")
-        name = re.sub(r"\d{2}\.\d{2}\.\d{4}", "", name)
-        name = re.sub(r"\s+", " ", name).strip()[:120]
+        # Kategori - tender ismi olarak kullan
+        name = ""
+        m6 = re.search(r"Категория закупки[:\s]+(.+?)(?:Предполагаемая|Коды|$)", full_text)
+        if m6:
+            name = m6.group(1).strip()[:120]
 
-        print(f"  DEBUG: id={tender_id} reg={reg_id} name={name[:50]}")
+        print(f"  DEBUG: id={tender_id} reg={reg_id} org={org[:30]} price={price}")
 
         tenders.append({
             "id": tender_id,
             "reg_id": reg_id,
             "name": name,
-            "org": "",
+            "org": org,
             "price": price,
             "deadline": deadline,
         })
