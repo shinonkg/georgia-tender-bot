@@ -28,6 +28,9 @@ jobs:
           key: tender-data-${{ runner.os }}
           restore-keys: tender-data-
 
+      - name: Reset seen
+        run: rm -f seen_tenders.json tracked_tenders.json
+
       - name: Run bot
         run: python georgia_tender_bot_READY.py
 
