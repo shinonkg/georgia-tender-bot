@@ -125,47 +125,54 @@ def parse_list_html(html):
             continue
 
         cols = row.find_all("td")
-        col_texts = [c.get_text(separator=" ", strip=True) for c in cols]
 
-        # Reg ID - NAT/SPA ile başlayan
+        # NAT numarasini onclick'ten al
         reg_id = ""
-        for txt in col_texts:
-            clean = txt.strip()
-            if any(clean.startswith(p) for p in ["NAT","SPA","GEO","CON","MEP","DAP"]):
-                reg_id = clean.split()[0]
-                break
+        m2 = re.search(r"NAT\d+|SPA\d+|GEO\d+|CON\d+|MEP\d+|DAP\d+", onclick)
+        if m2:
+            reg_id = m2.group(0)
 
-        # İsim - en uzun td içeriği
-        name = ""
-        for c in cols:
-            links = c.find_all("a")
-            if links:
-                for lnk in links:
-                    txt = lnk.get_text(strip=True)
-                    if len(txt) > len(name):
-                        name = txt
-            else:
-                txt = c.get_text(strip=True)
-                if len(txt) > len(name) and len(txt) > 10:
-                    name = txt
+        # Tum metni al, statusu temizle
+        full_text = " ".join([c.get_text(" ", strip=True) for c in cols])
+        for status in STATUS_EMOJI.keys():
+            full_text = full_text.replace(status, "")
+        full_text = re.sub(r"Электронный тендер.*?Номер заявки", "", full_text)
+        full_text = re.sub(r"\s+", " ", full_text).strip()
 
-        # Organizasyon, fiyat, son tarih
-        org = col_texts[1] if len(col_texts) > 1 else ""
+        # NAT numarasini metinden al
+        if not reg_id:
+            m3 = re.search(r"(NAT|SPA|GEO|CON|MEP|DAP)\d+", full_text)
+            if m3:
+                reg_id = m3.group(0)
+
+        # Fiyat
         price = ""
-        deadline = ""
-        for txt in col_texts:
-            if "GEL" in txt or "gel" in txt.lower():
-                price = txt
-            if re.search(r"\d{2}\.\d{2}\.\d{4}", txt):
-                deadline = txt
+        m4 = re.search(r"[\d\s`']+GEL", full_text)
+        if m4:
+            price = m4.group(0).strip()
 
-        print(f"  DEBUG: id={tender_id} reg={reg_id} name={name[:40]}")
+        # Tarih
+        deadline = ""
+        m5 = re.search(r"\d{2}\.\d{2}\.\d{4}", full_text)
+        if m5:
+            deadline = m5.group(0)
+
+        # Isim - reg_id ve price/tarih disindaki kisim
+        name = full_text
+        if reg_id:
+            name = name.replace(reg_id, "")
+        if price:
+            name = name.replace(price, "")
+        name = re.sub(r"\d{2}\.\d{2}\.\d{4}", "", name)
+        name = re.sub(r"\s+", " ", name).strip()[:120]
+
+        print(f"  DEBUG: id={tender_id} reg={reg_id} name={name[:50]}")
 
         tenders.append({
             "id": tender_id,
             "reg_id": reg_id,
             "name": name,
-            "org": org,
+            "org": "",
             "price": price,
             "deadline": deadline,
         })
